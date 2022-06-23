@@ -1,0 +1,82 @@
+name: Clone and Patch
+
+on: 
+  workflow_dispatch:
+    inputs:
+      logLevel:
+        description: 'Log level'     
+        required: true
+        default: 'warning'
+      tags:
+        description: 'Test scenario tags'  
+
+jobs:
+  deploy-lambda:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Setup node
+        uses: actions/setup-node@v3
+        with:
+          node-version: '16'
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: latest 
+
+      - name: Cache ~/.pnpm-store
+        uses: actions/cache@v3
+        env:
+          cache-name: cache-pnpm-store
+        with:
+          path: ~/.pnpm-store
+          key: ${{ runner.os }}-publish-${{ env.cache-name }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-publish-${{ env.cache-name }}-
+            ${{ runner.os }}-publish-
+            ${{ runner.os }}-
+
+      - name: Clone workspace-tools
+        run: git clone https://github.com/microsoft/workspace-tools.git
+      - name: checkout to version 0.16.2
+        working-directory: ./workspace-tools
+        run: git checkout tags/workspace-tools_v0.16.2
+      - name: Run command to patch 
+        working-directory: ./workspace-tools/src
+        run: sed -i 's/git(\[\"fetch\",\ remote/git(\[\"fetch\",\ \"--\",\ remote/g' git.ts
+      - name: git add .
+        working-directory: ./workspace-tools/
+        run: git add .
+      - name: git commit 
+        working-directory: ./workspace-tools/
+        run: git commit -m "patched 0.16.2"
+      - name: git tag 
+        working-directory: ./workspace-tools/
+        run: git tag workspace-tools_v0.16.2-patched
+      
+
+      
+      - uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-southeast-1
+      - run: aws codeartifact login --tool npm --repository npm --domain scantist --domain-owner ${{ secrets.AWS_ACCOUNT_ID }}
+      - run: echo CODEARTIFACT_AUTH_TOKEN=$(aws codeartifact get-authorization-token --domain scantist --domain-owner ${{ secrets.AWS_ACCOUNT_ID }} --query authorizationToken --output text --region ap-southeast-1 ) >> $GITHUB_ENV
+      # Build using SAM
+      - name: Gen npmrc
+        run: echo "registry=https://scantist-${{ secrets.AWS_ACCOUNT_ID }}.d.codeartifact.ap-southeast-1.amazonaws.com/npm/npm/
+          //scantist-${{ secrets.AWS_ACCOUNT_ID }}.d.codeartifact.ap-southeast-1.amazonaws.com/npm/npm/:always-auth=true
+          //scantist-${{ secrets.AWS_ACCOUNT_ID }}.d.codeartifact.ap-southeast-1.amazonaws.com/npm/npm/:_authToken=${CODEARTIFACT_AUTH_TOKEN}" >> ./.npmrc  
+
+      - name: Get version
+        run: echo "TAG_VERSION=${GITHUB_REF#refs/*/}" >> $GITHUB_ENV
+      - name: Get git head
+        run: echo "GIT_HEAD=${GITHUB_SHA}" >> $GITHUB_ENV         
+      - name: Build&publish
+        run: sh ./scripts/publish.sh
+        env:
+          TAG_VERSION: ${{env.TAG_VERSION}}
+          GIT_HEAD: ${{env.GIT_HEAD}}
+          FORCE_COLOR: 2
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}      

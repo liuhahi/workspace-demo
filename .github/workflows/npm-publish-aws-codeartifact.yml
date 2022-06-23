@@ -1,0 +1,63 @@
+name: Publish to aws registry
+
+on:
+  release:
+    types: [created]
+
+jobs:
+  deploy-lambda:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Setup node
+        uses: actions/setup-node@v3
+        with:
+          node-version: '16'
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: latest 
+
+      - name: Cache ~/.pnpm-store
+        uses: actions/cache@v3
+        env:
+          cache-name: cache-pnpm-store
+        with:
+          path: ~/.pnpm-store
+          key: ${{ runner.os }}-publish-${{ env.cache-name }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-publish-${{ env.cache-name }}-
+            ${{ runner.os }}-publish-
+            ${{ runner.os }}-
+
+      - name: Install dependencies
+        run: pnpm i --frozen-lockfile
+      - name: Lint
+        run: pnpm lint
+      # - name: Test
+      #   run: pnpm test
+
+      - uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-southeast-1
+      - run: aws codeartifact login --tool npm --repository npm --domain scantist --domain-owner ${{ secrets.AWS_ACCOUNT_ID }}
+      - run: echo CODEARTIFACT_AUTH_TOKEN=$(aws codeartifact get-authorization-token --domain scantist --domain-owner ${{ secrets.AWS_ACCOUNT_ID }} --query authorizationToken --output text --region ap-southeast-1 ) >> $GITHUB_ENV
+      # Build using SAM
+      - name: Gen npmrc
+        run: echo "registry=https://scantist-${{ secrets.AWS_ACCOUNT_ID }}.d.codeartifact.ap-southeast-1.amazonaws.com/npm/npm/
+          //scantist-${{ secrets.AWS_ACCOUNT_ID }}.d.codeartifact.ap-southeast-1.amazonaws.com/npm/npm/:always-auth=true
+          //scantist-${{ secrets.AWS_ACCOUNT_ID }}.d.codeartifact.ap-southeast-1.amazonaws.com/npm/npm/:_authToken=${CODEARTIFACT_AUTH_TOKEN}" >> ./.npmrc  
+
+      - name: Get version
+        run: echo "TAG_VERSION=${GITHUB_REF#refs/*/}" >> $GITHUB_ENV
+      - name: Get git head
+        run: echo "GIT_HEAD=${GITHUB_SHA}" >> $GITHUB_ENV         
+      - name: Build&publish
+        run: sh ./scripts/publish.sh
+        env:
+          TAG_VERSION: ${{env.TAG_VERSION}}
+          GIT_HEAD: ${{env.GIT_HEAD}}
+          FORCE_COLOR: 2
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

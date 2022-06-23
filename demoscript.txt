@@ -1,0 +1,32 @@
+workspace demo scripts:
+
+we found vulnerable version on clients project by scanning the source code
+link: https://scantist.io/u/liuhahi/org/liuhahi/projects/8732
+
+how are we going to patch?
+
+fork workspace-tools -> checkout out to vulnerable version -> patch -> publish
+
+sed -i -e 's/git(\[\"fetch\",\ remote/git(\[\"fetch\",\ \"--\",\ remote/g' git.ts
+
+aws codeartifact login --tool npm --repository npm --domain scantist --domain-owner 717463981577
+
+echo CODEARTIFACT_AUTH_TOKEN=$(aws codeartifact get-authorization-token --domain scantist --domain-owner 717463981577 --query authorizationToken --output text --region ap-southeast-1 )
+
+echo "registry=https://scantist-717463981577.d.codeartifact.ap-southeast-1.amazonaws.com/npm/npm/
+          //scantist-717463981577.d.codeartifact.ap-southeast-1.amazonaws.com/npm/npm/:always-auth=true
+          //scantist-717463981577.d.codeartifact.ap-southeast-1.amazonaws.com/npm/npm/:_authToken=${CODEARTIFACT_AUTH_TOKEN}"
+
+npm ping
+
+rm -rf node_modules
+pnpm install
+
+back to workspace-demo, 
+remove node_modules: rm -rf node_modules
+reinstall dependency from our codeartifact with the patched version
+
+restart server 
+
+// reset to npm registry
+
